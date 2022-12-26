@@ -90,7 +90,7 @@ local function yank_region()
   for _, v in pairs(selected_lines) do
     table.insert(lines, v)
   end
-  vim.api.nvim_command('let @"="' .. table.concat(lines, "\n") .. '"')
+  vim.api.nvim_command('let @"="' .. table.concat(lines, "\n"):gsub('"', '\\"') .. '"')
   sml.stop("Yanked region")
 end
 
