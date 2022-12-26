@@ -32,24 +32,23 @@ local function sort_keys(t)
   return keys
 end
 
--- local function newline_char()
---   local fileformat = vim.o.fileformat
---   local lf_tochar = {
---     unix = "\n", dos = "\r\n", mac = "\r"
---   }
---   return lf_tochar[fileformat]
--- end
-
 local function select_line()
   local contents = vim.fn.getline(".")
   local linenum = vim.fn.line(".")
+
+  if selected_lines[linenum] ~= nil then
+    vim.api.nvim_buf_del_extmark(0, namespace, selected_lines[linenum].ext_id)
+    selected_lines[linenum] = nil
+    return
+  end
+
   local linelen = linenum == "" and 0 or vim.fn.strdisplaywidth(contents)
-  vim.api.nvim_buf_set_extmark(0, namespace, linenum - 1, 0, {
+  local extid = vim.api.nvim_buf_set_extmark(0, namespace, linenum - 1, 0, {
     end_line = linenum - 1,
     end_col = linelen,
     hl_group = "Visual",
   })
-  selected_lines[linenum] = contents
+  selected_lines[linenum] = {ext_id = extid, contents = contents}
 end
 
 local function cursor_move(direction)
@@ -88,7 +87,7 @@ end
 local function yank_region()
   local lines = {}
   for _, v in pairs(selected_lines) do
-    table.insert(lines, v)
+    table.insert(lines, v.contents)
   end
   vim.api.nvim_command('let @"="' .. table.concat(lines, "\n"):gsub('"', '\\"') .. '"')
   sml.stop("Yanked region")
