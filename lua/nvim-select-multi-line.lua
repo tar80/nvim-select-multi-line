@@ -10,138 +10,241 @@ end
 
 vim.g.loaded_sml = true
 
+local NAME_SPACE = "sml"
+
+---@class sml
+---@field start function activate sml
+---@field stop function  deactivate sml
 local sml = {}
-local selected_lines = {}
-local activate_sml, keep_selection, pre_direction
-local namespace = vim.api.nvim_create_namespace("sml")
 
-local function sml_notify(msg)
-  print("[sml] " .. msg)
-end
+---@class Selection
+---@field private namespace integer namespace id
+---@field private _init function
+---@field private _ins function
+---@field private _del function
+---@field private _descending function
+local Selection = {}
 
-local function sort_keys(t)
-  local keys = {}
-  local n = 0
-  for k,_ in pairs(t) do
-    n = n + 1
-    keys[n] = k
+setmetatable(Selection, {
+  __index = {
+    namespace = vim.api.nvim_create_namespace(NAME_SPACE),
+
+    _init = function(self)
+      for i = 1, #self do
+        self[i] = nil
+      end
+      vim.api.nvim_buf_clear_namespace(0, self.namespace, 0, -1)
+    end,
+
+    ---@param line number cursor line number
+    _ins = function(self, line)
+      local contents = vim.fn.getline(line)
+      local linelen = line == "" and 0 or vim.fn.strdisplaywidth(contents)
+      local extid = vim.api.nvim_buf_set_extmark(0, self.namespace, line - 1, 0, {
+        end_line = line - 1,
+        end_col = linelen,
+        hl_group = "Visual",
+      })
+      table.insert(self, { ext_id = extid, line_num = line, contents = contents })
+    end,
+
+    ---@param index number element number of table(Selection)
+    ---@param value table table(Selection)
+    _del = function(self, index, value)
+      vim.api.nvim_buf_del_extmark(0, self.namespace, value.ext_id)
+      self[index] = {}
+    end,
+
+    ---@return table list of descending order
+    _descending = function(self)
+      local l = {}
+      local n = 0
+
+      for _, v in ipairs(self) do
+        if not vim.tbl_isempty(v) then
+          n = n + 1
+          l[n] = v.line_num
+        end
+      end
+
+      table.sort(l, function(a, b)
+        return tonumber(a) > tonumber(b)
+      end)
+
+      return l
+    end,
+  },
+})
+
+---@class sml
+---@field pre_direction number up/down cursor key information that was pressed immediately beforep
+---@field keep_selection boolean continue selection on cursor movement
+---@field _notify function
+---@field _select function
+---@field _yank function
+---@field _delete function
+---@field _cursor_move function
+---@field _selection_keys function
+---@field _release_keys function
+---@field _keys function
+---@field _toggle_linewise function
+local mt = {
+  pre_direction = 0,
+  keep_selection = false,
+}
+
+---@param message string hint message
+function mt._notify(_, message)
+  local header = ""
+
+  if not package.loaded["notify"] then
+    header = "[" .. NAME_SPACE .. "] "
   end
-  table.sort(keys,function(a,b)
-    return tonumber(a) > tonumber(b)
-  end)
-  return keys
+
+  vim.notify(header .. message, 2, { title = "nvim-select-multi-line" })
 end
 
-local function select_line()
-  local contents = vim.fn.getline(".")
+function mt._select()
   local linenum = vim.fn.line(".")
 
-  if selected_lines[linenum] ~= nil then
-    vim.api.nvim_buf_del_extmark(0, namespace, selected_lines[linenum].ext_id)
-    selected_lines[linenum] = nil
-    return
+  for index, value in ipairs(Selection) do
+    if value.line_num == linenum then
+      Selection:_del(index, value)
+      return
+    end
   end
 
-  local linelen = linenum == "" and 0 or vim.fn.strdisplaywidth(contents)
-  local extid = vim.api.nvim_buf_set_extmark(0, namespace, linenum - 1, 0, {
-    end_line = linenum - 1,
-    end_col = linelen,
-    hl_group = "Visual",
-  })
-  selected_lines[linenum] = {ext_id = extid, contents = contents}
+  Selection:_ins(linenum)
 end
 
-local function cursor_move(direction)
-  if pre_direction ~= nil and pre_direction ~= direction then
-    select_line()
-    vim.fn.cursor(vim.fn.line(".") + direction, vim.fn.col("."))
-    return
+function mt._yank(self)
+  local tbl = {}
+
+  for _, v in ipairs(Selection) do
+    table.insert(tbl, v.contents)
   end
-    vim.fn.cursor(vim.fn.line(".") + direction, vim.fn.col("."))
-    select_line()
+
+  vim.api.nvim_command('let @"="' .. table.concat(tbl, "\n"):gsub('"', '\\"') .. '"')
+  self:stop("Yanked region")
 end
 
-local function release_selection()
-    vim.keymap.del("n", "j")
-    vim.keymap.del("n", "k")
-    keep_selection = nil
-end
+function mt._delete(self)
+  local tbl = Selection:_descending()
 
-local function toggle_visual_mode_linewise()
-  if keep_selection then
-    release_selection()
-    return sml_notify("Release visual-selection")
-  end
-  vim.keymap.set("n", "j", function()
-    cursor_move(1)
-  end)
-  vim.keymap.set("n", "k", function()
-    cursor_move(-1)
-  end)
-  keep_selection = true
-  pre_direction = nil
-  select_line()
-  return sml_notify("Keep visual-selection")
-end
-
-local function yank_region()
-  local lines = {}
-  for _, v in pairs(selected_lines) do
-    table.insert(lines, v.contents)
-  end
-  vim.api.nvim_command('let @"="' .. table.concat(lines, "\n"):gsub('"', '\\"') .. '"')
-  sml.stop("Yanked region")
-end
-
-local function delete_region()
-  local lines = sort_keys(selected_lines)
-  for _, n in ipairs(lines) do
+  for _, n in ipairs(tbl) do
     vim.api.nvim_command(n .. "delete")
   end
-  sml.stop()
+
+  self:stop()
+end
+
+---@param direction number cursor up/down information
+function mt._cursor_move(self, direction)
+  if self.pre_direction ~= 0 and self.pre_direction ~= direction then
+    self._select()
+    vim.fn.cursor(vim.fn.line(".") + direction, vim.fn.col("."))
+  else
+    vim.fn.cursor(vim.fn.line(".") + direction, vim.fn.col("."))
+    self._select()
+    self.pre_direction = direction
+  end
+end
+
+function mt._selection_keys(self)
+  self.keep_selection = true
+  vim.keymap.set("n", "j", function()
+    self:_cursor_move(1)
+  end)
+  vim.keymap.set("n", "k", function()
+    self:_cursor_move(-1)
+  end)
+end
+
+function mt._release_keys(self)
+  self.keep_selection = false
+  vim.keymap.del("n", "j")
+  vim.keymap.del("n", "k")
+end
+
+function mt._keys(self)
+  if vim.b.enable_sml then
+    self.keep_selection = false
+    vim.keymap.set("n", "v", function()
+      self._select()
+    end)
+    vim.keymap.set("n", "V", function()
+      self:_toggle_linewise()
+    end)
+    vim.keymap.set("n", "y", function()
+      self:_yank()
+    end)
+    vim.keymap.set("n", "d", function()
+      self:_delete()
+    end)
+    vim.keymap.set("n", "<C-c>", function()
+      self:stop()
+    end)
+    vim.keymap.set("n", "<Esc>", function()
+      self:stop()
+    end)
+  else
+    vim.keymap.del("n", "v")
+    vim.keymap.del("n", "V")
+    vim.keymap.del("n", "y")
+    vim.keymap.del("n", "d")
+    vim.keymap.del("n", "<C-c>")
+    vim.keymap.del("n", "<Esc>")
+
+    if mt.keep_selection then
+      mt:_release_keys()
+    end
+  end
+end
+
+function mt._toggle_linewise(self)
+  local msg
+
+  if self.keep_selection then
+    self:_release_keys()
+    msg = "Release visual-selection"
+  else
+    self:_selection_keys()
+    self.pre_direction = 0
+    self._select()
+    msg = "Keep visual-selection"
+  end
+
+  self:_notify(msg)
 end
 
 function sml.start()
-  if activate_sml then
-    return sml.stop("Stop")
+  if vim.b.enable_sml then
+    return sml:stop("Stop")
   end
-  activate_sml = true
-  keep_selection = nil
-  vim.keymap.set("n", "v", function()
-    select_line()
-  end)
-  vim.keymap.set("n", "V", function()
-    toggle_visual_mode_linewise()
-  end)
-  vim.keymap.set("n", "y", function()
-    yank_region()
-  end)
-  vim.keymap.set("n", "d", function()
-    delete_region()
-  end)
-  vim.keymap.set("n", "<C-c>", function()
-    sml.stop()
-  end)
-  vim.keymap.set("n", "<Esc>", function()
-    sml.stop()
-  end)
-  return sml_notify("Start")
+
+  vim.b.enable_sml = true
+  mt.keep_selection = false
+  sml:_keys()
+  sml:_notify("Start")
 end
 
-function sml.stop(msg)
-  activate_sml = nil
-  vim.keymap.del("n", "v")
-  vim.keymap.del("n", "V")
-  vim.keymap.del("n", "y")
-  vim.keymap.del("n", "d")
-  vim.keymap.del("n", "<C-c>")
-  vim.keymap.del("n", "<Esc>")
-  if keep_selection then
-    release_selection()
+---@param msg string hint message
+function sml.stop(self, msg)
+  vim.b.enable_sml = nil
+  self:_keys()
+  Selection:_init()
+
+  if self.keep_selection then
+    self:_release_keys()
   end
-  selected_lines = {}
-  vim.api.nvim_buf_clear_namespace(0, namespace, 0, -1)
-  return msg and sml_notify(msg) or vim.cmd[[echo]]
+
+  if msg then
+    self:_notify(msg)
+  else
+    vim.cmd([[echo]])
+  end
 end
+
+setmetatable(sml, { __index = mt })
 
 return sml
