@@ -38,8 +38,8 @@ setmetatable(Selection, {
 
     ---@param line number cursor line number
     _ins = function(self, line)
-      local contents = vim.fn.getline(line)
-      local linelen = line == "" and 0 or vim.fn.strdisplaywidth(contents)
+      local contents = vim.api.nvim_get_current_line()
+      local linelen = line == "" and 0 or vim.api.nvim_strwidth(contents)
       local extid = vim.api.nvim_buf_set_extmark(0, self.namespace, line - 1, 0, {
         end_line = line - 1,
         end_col = linelen,
@@ -88,13 +88,13 @@ setmetatable(Selection, {
 ---@field _release_keys function
 ---@field _keys function
 ---@field _toggle_linewise function
-local mt = {
+local sml_mt = {
   pre_direction = 0,
   keep_selection = false,
 }
 
 ---@param message string hint message
-function mt._notify(_, message)
+function sml_mt:_notify(message)
   local header = ""
 
   if not package.loaded["notify"] then
@@ -104,7 +104,7 @@ function mt._notify(_, message)
   vim.notify(header .. message, 2, { title = "nvim-select-multi-line" })
 end
 
-function mt._select()
+function sml_mt._select()
   local linenum = vim.fn.line(".")
 
   for index, value in ipairs(Selection) do
@@ -117,7 +117,7 @@ function mt._select()
   Selection:_ins(linenum)
 end
 
-function mt._yank(self)
+function sml_mt:_yank()
   local tbl = {}
 
   for _, v in ipairs(Selection) do
@@ -128,7 +128,7 @@ function mt._yank(self)
   self:stop("Yanked region")
 end
 
-function mt._delete(self)
+function sml_mt:_delete()
   local tbl = Selection:_descending()
 
   for _, n in ipairs(tbl) do
@@ -139,7 +139,7 @@ function mt._delete(self)
 end
 
 ---@param direction number cursor up/down information
-function mt._cursor_move(self, direction)
+function sml_mt:_cursor_move(direction)
   if self.pre_direction ~= 0 and self.pre_direction ~= direction then
     self._select()
     vim.fn.cursor(vim.fn.line(".") + direction, vim.fn.col("."))
@@ -150,7 +150,7 @@ function mt._cursor_move(self, direction)
   end
 end
 
-function mt._selection_keys(self)
+function sml_mt:_selection_keys()
   self.keep_selection = true
   vim.keymap.set("n", "j", function()
     self:_cursor_move(1)
@@ -160,14 +160,14 @@ function mt._selection_keys(self)
   end)
 end
 
-function mt._release_keys(self)
+function sml_mt:_release_keys()
   self.keep_selection = false
   vim.keymap.del("n", "j")
   vim.keymap.del("n", "k")
 end
 
-function mt._keys(self)
-  if vim.b.enable_sml then
+function sml_mt:_keys()
+  if vim.g.enable_sml then
     self.keep_selection = false
     vim.keymap.set("n", "v", function()
       self._select()
@@ -195,13 +195,13 @@ function mt._keys(self)
     vim.keymap.del("n", "<C-c>")
     vim.keymap.del("n", "<Esc>")
 
-    if mt.keep_selection then
-      mt:_release_keys()
+    if sml_mt.keep_selection then
+      sml_mt:_release_keys()
     end
   end
 end
 
-function mt._toggle_linewise(self)
+function sml_mt:_toggle_linewise()
   local msg
 
   if self.keep_selection then
@@ -218,19 +218,19 @@ function mt._toggle_linewise(self)
 end
 
 function sml.start()
-  if vim.b.enable_sml then
+  if vim.g.enable_sml then
     return sml:stop("Stop")
   end
 
-  vim.b.enable_sml = true
-  mt.keep_selection = false
+  vim.g.enable_sml = true
+  sml_mt.keep_selection = false
   sml:_keys()
   sml:_notify("Start")
 end
 
 ---@param msg string hint message
-function sml.stop(self, msg)
-  vim.b.enable_sml = nil
+function sml:stop(msg)
+  vim.g.enable_sml = nil
   self:_keys()
   Selection:_init()
 
@@ -245,6 +245,6 @@ function sml.stop(self, msg)
   end
 end
 
-setmetatable(sml, { __index = mt })
+setmetatable(sml, { __index = sml_mt })
 
 return sml
