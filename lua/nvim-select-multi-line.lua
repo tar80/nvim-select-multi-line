@@ -33,12 +33,14 @@ setmetatable(Selection, {
       for i = 1, #self do
         self[i] = nil
       end
+
+      self.last_line = 0
       vim.api.nvim_buf_clear_namespace(0, self.namespace, 0, -1)
     end,
 
     ---@param line number cursor line number
     _ins = function(self, line)
-      local contents = vim.api.nvim_get_current_line()
+      local contents = vim.fn.getline(line)
       local linelen = line == "" and 0 or vim.api.nvim_strwidth(contents)
       local extid = vim.api.nvim_buf_set_extmark(0, self.namespace, line - 1, 0, {
         end_line = line - 1,
@@ -77,18 +79,19 @@ setmetatable(Selection, {
 })
 
 ---@class sml
+---@field last_line number last line of file
 ---@field pre_direction number up/down cursor key information that was pressed immediately beforep
 ---@field keep_selection boolean continue selection on cursor movement
 ---@field _notify function
 ---@field _select function
 ---@field _yank function
 ---@field _delete function
----@field _cursor_move function
 ---@field _selection_keys function
 ---@field _release_keys function
 ---@field _keys function
 ---@field _toggle_linewise function
 local sml_mt = {
+  last_line = 0,
   pre_direction = 0,
   keep_selection = false,
 }
@@ -104,8 +107,9 @@ function sml_mt:_notify(message)
   vim.notify(header .. message, 2, { title = "nvim-select-multi-line" })
 end
 
-function sml_mt._select()
-  local linenum = vim.fn.line(".")
+---@param n number specify line number
+function sml_mt._select(n)
+  local linenum = n or vim.fn.line(".")
 
   for index, value in ipairs(Selection) do
     if value.line_num == linenum then
@@ -137,30 +141,42 @@ function sml_mt:_delete()
   self:stop()
 end
 
----@param direction number cursor up/down information
-function sml_mt:_cursor_move(direction)
-  if self.pre_direction ~= 0 and self.pre_direction ~= direction then
-    self._select()
-    vim.fn.cursor(vim.fn.line(".") + direction, vim.fn.col("."))
-  else
-    vim.fn.cursor(vim.fn.line(".") + direction, vim.fn.col("."))
-    self._select()
-    self.pre_direction = direction
-  end
-end
-
 function sml_mt:_selection_keys()
   self.keep_selection = true
-  vim.keymap.set("n", "j", function()
-    self:_cursor_move(1)
-  end)
-  vim.keymap.set("n", "k", function()
-    self:_cursor_move(-1)
-  end)
+  vim.api.nvim_create_user_command("SmlVisualMove", function(opts)
+    local cursor_line = vim.fn.line(".")
+    local count = opts.count == 0 and 1 or (opts.count + 1) - cursor_line
+    local movespec = cursor_line + opts.args * count
+
+    -- limit top and bottom of the number of lines
+    if movespec < 1 then
+      movespec = 1
+    elseif movespec > self.last_line then
+      movespec = self.last_line
+    end
+
+    vim.fn.cursor(movespec, vim.fn.col("."))
+
+    -- adjusting when the cursor wraps up and down
+    if self.pre_direction == 0 or self.pre_direction == opts.args then
+      self.pre_direction = opts.args
+      cursor_line = cursor_line + opts.args
+    else
+      movespec = movespec + opts.args * -1
+    end
+
+    for i = cursor_line, movespec, opts.args do
+      self._select(i)
+    end
+  end, { count = true, nargs = 1 })
+
+  vim.keymap.set("n", "j", ":SmlVisualMove +1<CR>", { silent = true })
+  vim.keymap.set("n", "k", ":SmlVisualMove -1<CR>", { silent = true })
 end
 
 function sml_mt:_release_keys()
   self.keep_selection = false
+  vim.api.nvim_del_user_command("SmlVisualMove")
   vim.keymap.del("n", "j")
   vim.keymap.del("n", "k")
 end
@@ -224,7 +240,8 @@ function sml.start()
   end
 
   vim.g.enable_sml = true
-  sml_mt.keep_selection = false
+  sml.keep_selection = false
+  sml.last_line = vim.fn.line("$")
   sml:_keys()
   sml:_notify("Start")
 end
