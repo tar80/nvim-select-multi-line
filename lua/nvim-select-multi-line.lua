@@ -125,14 +125,13 @@ function sml_mt:_yank()
   end
 
   vim.api.nvim_command('let @"="' .. table.concat(tbl, "\n"):gsub('"', '\\"') .. '"')
-  self:stop("Yanked region")
 end
 
 function sml_mt:_delete()
   local tbl = Selection:_descending()
 
   for _, n in ipairs(tbl) do
-    vim.api.nvim_command(n .. "delete")
+    vim.api.nvim_command(n .. "delete _")
   end
 
   self:stop()
@@ -177,8 +176,10 @@ function sml_mt:_keys()
     end)
     vim.keymap.set("n", "y", function()
       self:_yank()
+      self:stop("Yank selection")
     end)
     vim.keymap.set("n", "d", function()
+      self:_yank()
       self:_delete()
     end)
     vim.keymap.set("n", "<C-c>", function()
