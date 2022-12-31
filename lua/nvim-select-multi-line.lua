@@ -82,6 +82,7 @@ setmetatable(Selection, {
 ---@field last_line number last line of file
 ---@field pre_direction number up/down cursor key information that was pressed immediately beforep
 ---@field keep_selection boolean continue selection on cursor movement
+---@field clipboard boolean when yank, also yanked to the clipboard
 ---@field _notify function
 ---@field _select function
 ---@field _yank function
@@ -94,6 +95,7 @@ local sml_mt = {
   last_line = 0,
   pre_direction = 0,
   keep_selection = false,
+  clipboard = false,
 }
 
 ---@param message string hint message
@@ -121,14 +123,18 @@ function sml_mt._select(n)
   Selection:_ins(linenum)
 end
 
-function sml_mt:_yank()
+function sml_mt:_yank(clipboard)
   local tbl = {}
 
   for _, v in ipairs(Selection) do
     table.insert(tbl, v.contents)
   end
 
-  vim.api.nvim_command('let @"="' .. table.concat(tbl, "\n"):gsub('"', '\\"') .. '"')
+  vim.api.nvim_command('let @"="' .. table.concat(tbl, "\n"):gsub('"', '\\"') .. '\n"')
+
+  if clipboard then
+    vim.cmd('let @* = @"')
+  end
 end
 
 function sml_mt:_delete()
@@ -191,7 +197,7 @@ function sml_mt:_keys()
       self:_toggle_linewise()
     end)
     vim.keymap.set("n", "y", function()
-      self:_yank()
+      self:_yank(self.clipboard)
       self:stop("Yank selection")
     end)
     vim.keymap.set("n", "d", function()
