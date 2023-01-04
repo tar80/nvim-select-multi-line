@@ -25,7 +25,7 @@ use({ "tar80/nvim-select-multi-line", branch = "tar80" })
 
 If true, also copy to clipboard when yanking  
 
-`require("nvim-select-multi-line").clipboard = true`
+`require("nvim-select-multi-line").clipboard(true)`
 
 ### Usage
 

@@ -17,15 +17,27 @@ local NAME_SPACE = "sml"
 ---@field stop function  deactivate sml
 local sml = {}
 
----@class Selection
+---@class _inner
+---@field last_line number last line of file
+---@field pre_direction number up/down cursor key information that was pressed immediately beforep
+---@field keep_selection boolean continue selection on cursor movement
+---@field clipboard boolean when yank, also yanked to the clipboard
+local _inner = {
+  last_line = 0,
+  pre_direction = 0,
+  keep_selection = false,
+  clipboard = false,
+}
+
+---@class selection
 ---@field private namespace integer namespace id
 ---@field private _init function
 ---@field private _ins function
 ---@field private _del function
 ---@field private _descending function
-local Selection = {}
+local selection = {}
 
-setmetatable(Selection, {
+setmetatable(selection, {
   __index = {
     namespace = vim.api.nvim_create_namespace(NAME_SPACE),
 
@@ -34,7 +46,7 @@ setmetatable(Selection, {
         self[i] = nil
       end
 
-      self.last_line = 0
+      _inner.last_line = 0
       vim.api.nvim_buf_clear_namespace(0, self.namespace, 0, -1)
     end,
 
@@ -78,55 +90,40 @@ setmetatable(Selection, {
   },
 })
 
----@class sml
----@field last_line number last line of file
----@field pre_direction number up/down cursor key information that was pressed immediately beforep
----@field keep_selection boolean continue selection on cursor movement
----@field clipboard boolean when yank, also yanked to the clipboard
----@field _notify function
----@field _select function
----@field _yank function
----@field _delete function
----@field _selection_keys function
----@field _release_keys function
----@field _keys function
----@field _toggle_linewise function
-local sml_mt = {
-  last_line = 0,
-  pre_direction = 0,
-  keep_selection = false,
-  clipboard = false,
-}
-
 ---@param message string hint message
-function sml_mt:_notify(message)
+---@param errorlevel? number
+local function notify(message, errorlevel)
   local header = ""
+  local level = errorlevel or 2
 
   if not package.loaded["notify"] then
     header = "[" .. NAME_SPACE .. "] "
   end
 
-  vim.notify(header .. message, 2, { title = "nvim-select-multi-line" })
+  vim.notify(header .. message, level, { title = "nvim-select-multi-line" })
 end
 
----@param n number specify line number
-function sml_mt._select(n)
+---@package
+---@param n? number specify line number
+local function select_line(n)
   local linenum = n or vim.fn.line(".")
 
-  for index, value in ipairs(Selection) do
+  for index, value in ipairs(selection) do
     if value.line_num == linenum then
-      Selection:_del(index, value)
+      selection:_del(index, value)
       return
     end
   end
 
-  Selection:_ins(linenum)
+  selection:_ins(linenum)
 end
 
-function sml_mt:_yank(clipboard)
+---@package
+---@param clipboard? boolean
+local function yank_selection(clipboard)
   local tbl = {}
 
-  for _, v in ipairs(Selection) do
+  for _, v in ipairs(selection) do
     table.insert(tbl, v.contents)
   end
 
@@ -137,18 +134,20 @@ function sml_mt:_yank(clipboard)
   end
 end
 
-function sml_mt:_delete()
-  local tbl = Selection:_descending()
+---@package
+local function delete_selection()
+  local tbl = selection:_descending()
 
   for _, n in ipairs(tbl) do
     vim.api.nvim_command(n .. "delete _")
   end
 
-  self:stop()
+  sml:stop()
 end
 
-function sml_mt:_selection_keys()
-  self.keep_selection = true
+---@package
+local function selection_keys()
+  _inner.keep_selection = true
   vim.api.nvim_create_user_command("SmlVisualMove", function(opts)
     local cursor_line = vim.fn.line(".")
     local count = opts.count == 0 and 1 or (opts.count + 1) - cursor_line
@@ -157,22 +156,22 @@ function sml_mt:_selection_keys()
     -- limit top and bottom of the number of lines
     if movespec < 1 then
       movespec = 1
-    elseif movespec > self.last_line then
-      movespec = self.last_line
+    elseif movespec > _inner.last_line then
+      movespec = _inner.last_line
     end
 
     vim.fn.cursor(movespec, vim.fn.col("."))
 
     -- adjusting when the cursor wraps up and down
-    if self.pre_direction == 0 or self.pre_direction == opts.args then
-      self.pre_direction = opts.args
+    if _inner.pre_direction == 0 or _inner.pre_direction == opts.args then
+      _inner.pre_direction = opts.args
       cursor_line = cursor_line + opts.args
     else
       movespec = movespec + opts.args * -1
     end
 
     for i = cursor_line, movespec, opts.args do
-      self._select(i)
+      select_line(i)
     end
   end, { count = true, nargs = 1 })
 
@@ -180,35 +179,54 @@ function sml_mt:_selection_keys()
   vim.keymap.set("n", "k", ":SmlVisualMove -1<CR>", { silent = true })
 end
 
-function sml_mt:_release_keys()
-  self.keep_selection = false
+---@package
+local function release_keys()
+  _inner.keep_selection = false
   vim.api.nvim_del_user_command("SmlVisualMove")
   vim.keymap.del("n", "j")
   vim.keymap.del("n", "k")
 end
 
-function sml_mt:_keys()
+---@package
+local function toggle_linewise()
+  local msg
+
+  if _inner.keep_selection then
+    release_keys()
+    msg = "Release visual-selection"
+  else
+    selection_keys()
+    _inner.pre_direction = 0
+    select_line()
+    msg = "Keep visual-selection"
+  end
+
+  notify(msg)
+end
+
+---@package
+local function additional_keys()
   if vim.g.enable_sml then
-    self.keep_selection = false
+    _inner.keep_selection = false
     vim.keymap.set("n", "v", function()
-      self._select()
+      select_line()
     end)
     vim.keymap.set("n", "V", function()
-      self:_toggle_linewise()
+      toggle_linewise()
     end)
     vim.keymap.set("n", "y", function()
-      self:_yank(self.clipboard)
-      self:stop("Yank selection")
+      yank_selection(_inner.clipboard)
+      sml:stop("Yank selection")
     end)
     vim.keymap.set("n", "d", function()
-      self:_yank()
-      self:_delete()
+      yank_selection()
+      delete_selection()
     end)
     vim.keymap.set("n", "<C-c>", function()
-      self:stop()
+      sml:stop()
     end)
     vim.keymap.set("n", "<Esc>", function()
-      self:stop()
+      sml:stop()
     end)
   else
     vim.keymap.del("n", "v")
@@ -218,26 +236,10 @@ function sml_mt:_keys()
     vim.keymap.del("n", "<C-c>")
     vim.keymap.del("n", "<Esc>")
 
-    if sml_mt.keep_selection then
-      sml_mt:_release_keys()
+    if _inner.keep_selection then
+      release_keys()
     end
   end
-end
-
-function sml_mt:_toggle_linewise()
-  local msg
-
-  if self.keep_selection then
-    self:_release_keys()
-    msg = "Release visual-selection"
-  else
-    self:_selection_keys()
-    self.pre_direction = 0
-    self._select()
-    msg = "Keep visual-selection"
-  end
-
-  self:_notify(msg)
 end
 
 function sml.start()
@@ -247,28 +249,38 @@ function sml.start()
 
   vim.g.enable_sml = true
   sml.keep_selection = false
-  sml.last_line = vim.fn.line("$")
-  sml:_keys()
-  sml:_notify("Start")
+  _inner.last_line = vim.fn.line("$")
+  additional_keys()
+  notify("Start")
 end
 
 ---@param msg string hint message
 function sml:stop(msg)
   vim.g.enable_sml = nil
-  self:_keys()
-  Selection:_init()
+  additional_keys()
+  selection:_init()
 
   if self.keep_selection then
-    self:_release_keys()
+    release_keys()
   end
 
   if msg then
-    self:_notify(msg)
+    notify(msg)
   else
     vim.cmd([[echo]])
   end
 end
 
-setmetatable(sml, { __index = sml_mt })
+---@param bool boolean
+function sml.clipboard(bool)
+  _inner.clipboard = bool
+end
+
+setmetatable(sml, {
+  ---@param name string new field name
+  __newindex = function(_, name)
+      notify("'" .. name .. "' is protected", 3)
+  end,
+})
 
 return sml
