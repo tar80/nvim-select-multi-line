@@ -4,12 +4,6 @@
 -- License: MIT License
 --------------------------------------------------------------------------------
 
-if vim.g.loaded_sml then
-  return
-end
-
-vim.g.loaded_sml = true
-
 local NAME_SPACE = "sml"
 
 ---@class sml
@@ -52,7 +46,7 @@ setmetatable(selection, {
 
     ---@param line number cursor line number
     _ins = function(self, line)
-      local contents = vim.fn.getline(line)
+      local contents = vim.api.nvim_get_current_line()
       local linelen = line == "" and 0 or vim.api.nvim_strwidth(contents)
       local extid = vim.api.nvim_buf_set_extmark(0, self.namespace, line - 1, 0, {
         end_line = line - 1,
@@ -130,7 +124,7 @@ local function yank_selection(clipboard)
   vim.api.nvim_command('let @"="' .. table.concat(tbl, "\n"):gsub('"', '\\"') .. '\n"')
 
   if clipboard then
-    vim.cmd('let @* = @"')
+    vim.api.nvim_command('let @* = @"')
   end
 end
 
@@ -143,6 +137,17 @@ local function delete_selection()
   end
 
   sml:stop()
+end
+
+---@package
+---@param mode string specify map mode
+---@param key string specify map key
+local function del_map(mode, key)
+  if vim.fn.maparg(key, mode) == "" then
+    return
+  end
+
+  vim.keymap.del(mode, key)
 end
 
 ---@package
@@ -160,7 +165,7 @@ local function selection_keys()
       movespec = _inner.last_line
     end
 
-    vim.fn.cursor(movespec, vim.fn.col("."))
+    vim.api.nvim_win_set_cursor(0, { movespec, vim.fn.col(".") })
 
     -- adjusting when the cursor wraps up and down
     if _inner.pre_direction == 0 or _inner.pre_direction == opts.args then
@@ -183,8 +188,8 @@ end
 local function release_keys()
   _inner.keep_selection = false
   vim.api.nvim_del_user_command("SmlVisualMove")
-  vim.keymap.del("n", "j")
-  vim.keymap.del("n", "k")
+  del_map("n", "j")
+  del_map("n", "k")
 end
 
 ---@package
@@ -229,12 +234,12 @@ local function additional_keys()
       sml:stop()
     end)
   else
-    vim.keymap.del("n", "v")
-    vim.keymap.del("n", "V")
-    vim.keymap.del("n", "y")
-    vim.keymap.del("n", "d")
-    vim.keymap.del("n", "<C-c>")
-    vim.keymap.del("n", "<Esc>")
+    del_map("n", "v")
+    del_map("n", "V")
+    del_map("n", "y")
+    del_map("n", "d")
+    del_map("n", "<C-c>")
+    del_map("n", "<Esc>")
 
     if _inner.keep_selection then
       release_keys()
@@ -248,7 +253,6 @@ function sml.start()
   end
 
   vim.g.enable_sml = true
-  sml.keep_selection = false
   _inner.last_line = vim.fn.line("$")
   additional_keys()
   notify("Start")
@@ -260,14 +264,10 @@ function sml:stop(msg)
   additional_keys()
   selection:_init()
 
-  if self.keep_selection then
-    release_keys()
-  end
-
   if msg then
     notify(msg)
   else
-    vim.cmd([[echo]])
+    vim.api.nvim_command("echo")
   end
 end
 
@@ -279,7 +279,7 @@ end
 setmetatable(sml, {
   ---@param name string new field name
   __newindex = function(_, name)
-      notify("'" .. name .. "' is protected", 3)
+    notify("'" .. name .. "' is protected", 3)
   end,
 })
 
