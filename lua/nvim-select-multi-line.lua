@@ -4,7 +4,7 @@
 -- License: MIT License
 --------------------------------------------------------------------------------
 
-local NAME_SPACE = "sml"
+local NAMESPACE = "sml"
 
 ---@class sml
 ---@field start function activate sml
@@ -33,7 +33,7 @@ local selection = {}
 
 setmetatable(selection, {
   __index = {
-    namespace = vim.api.nvim_create_namespace(NAME_SPACE),
+    namespace = vim.api.nvim_create_namespace(NAMESPACE),
 
     _init = function(self)
       for i = 1, #self do
@@ -91,7 +91,7 @@ local function notify(message, errorlevel)
   local level = errorlevel or 2
 
   if not package.loaded["notify"] then
-    header = "[" .. NAME_SPACE .. "] "
+    header = "[" .. NAMESPACE .. "] "
   end
 
   vim.notify(header .. message, level, { title = "nvim-select-multi-line" })
@@ -154,9 +154,9 @@ end
 local function selection_keys()
   _inner.keep_selection = true
   vim.api.nvim_create_user_command("SmlVisualMove", function(opts)
-    local cursor_line = vim.fn.line(".")
-    local count = opts.count == 0 and 1 or (opts.count + 1) - cursor_line
-    local movespec = cursor_line + opts.args * count
+    local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+    local count = opts.count == 0 and 1 or (opts.count + 1) - row
+    local movespec = row + opts.args * count
 
     -- limit top and bottom of the number of lines
     if movespec < 1 then
@@ -165,17 +165,17 @@ local function selection_keys()
       movespec = _inner.last_line
     end
 
-    vim.api.nvim_win_set_cursor(0, { movespec, vim.fn.col(".") })
+    vim.api.nvim_win_set_cursor(0, { movespec, col })
 
     -- adjusting when the cursor wraps up and down
     if _inner.pre_direction == 0 or _inner.pre_direction == opts.args then
       _inner.pre_direction = opts.args
-      cursor_line = cursor_line + opts.args
+      row = row + opts.args
     else
       movespec = movespec + opts.args * -1
     end
 
-    for i = cursor_line, movespec, opts.args do
+    for i = row, movespec, opts.args do
       select_line(i)
     end
   end, { count = true, nargs = 1 })
